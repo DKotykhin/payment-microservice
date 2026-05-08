@@ -32,4 +32,8 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   readonly STRIPE_SECRET_KEY: string;
+
+  @IsString()
+  @IsNotEmpty()
+  readonly STRIPE_WEBHOOK_SECRET: string;
 }

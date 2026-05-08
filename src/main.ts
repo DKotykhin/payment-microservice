@@ -5,6 +5,8 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 
 import { GrpcExceptionFilter } from './utils/filters/grpc-exception.filter';
 import { AppModule } from './app.module';
+import { HEALTH_CHECK_V1_PACKAGE_NAME } from './generated-types/health-check';
+import { PAYMENT_V1_PACKAGE_NAME } from './generated-types/payment';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -22,8 +24,8 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: [],
-      protoPath: [],
+      package: [HEALTH_CHECK_V1_PACKAGE_NAME, PAYMENT_V1_PACKAGE_NAME],
+      protoPath: ['proto/health-check.proto', 'proto/payment.proto'],
       url,
     },
   });
