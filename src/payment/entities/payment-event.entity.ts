@@ -1,4 +1,4 @@
-import { Column, Entity, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Column, Entity, Index, ManyToOne, JoinColumn, Unique } from 'typeorm';
 
 import { BaseEntity } from '../../database/base.entity';
 import { PaymentProvider, PaymentStatus } from '../enums/payment.enum';
@@ -6,10 +6,11 @@ import { Payment } from './payment.entity';
 import { PaymentEventType } from '../enums/payment-event.enum';
 
 @Entity('payment_events')
+@Unique(['providerEventId', 'eventType'])
 export class PaymentEvent extends BaseEntity {
   @Index()
-  @Column({ type: 'varchar' })
-  paymentId: string;
+  @Column({ type: 'varchar', nullable: true })
+  paymentId: string | null;
 
   @Column({ type: 'enum', enum: PaymentEventType, enumName: 'payment_event_type' })
   eventType: PaymentEventType;
@@ -20,8 +21,7 @@ export class PaymentEvent extends BaseEntity {
   @Column({ type: 'enum', enum: PaymentProvider, enumName: 'payment_provider', nullable: true })
   provider: PaymentProvider | null;
 
-  // Stripe event ID — used to detect and skip duplicate webhook deliveries
-  @Column({ type: 'varchar', nullable: true, unique: true })
+  @Column({ type: 'varchar', nullable: true })
   providerEventId: string | null;
 
   @Column({ type: 'jsonb', nullable: true })

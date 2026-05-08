@@ -60,10 +60,14 @@ export interface GetPaymentRequest {
 
 export interface GetPaymentsByOrderRequest {
   orderId: string;
+  page: number;
+  limit: number;
 }
 
 export interface GetPaymentsByUserRequest {
   userId: string;
+  page: number;
+  limit: number;
 }
 
 export interface RefundPaymentRequest {
@@ -93,6 +97,9 @@ export interface PaymentResponse {
 
 export interface GetPaymentsResponse {
   payments: PaymentResponse[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export const PAYMENT_V1_PACKAGE_NAME = "payment.v1";

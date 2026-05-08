@@ -1,8 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 
-import { EmailRequest } from './email.request.interface';
-
 @Injectable()
 export class MessageBrokerService {
   protected readonly logger = new Logger(MessageBrokerService.name);
@@ -16,7 +14,7 @@ export class MessageBrokerService {
     await this.notificationMicroserviceClient.connect();
   }
 
-  emitMessage(pattern: string, payload: EmailRequest): void {
+  emitMessage<T>(pattern: string, payload: T): void {
     this.logger.log(`Emitting event: ${pattern}`);
 
     this.notificationMicroserviceClient.emit(pattern, payload).subscribe({

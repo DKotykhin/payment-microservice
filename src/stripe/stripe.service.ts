@@ -36,6 +36,10 @@ export class StripeService implements OnModuleInit {
     return this.client.checkout.sessions.create(params);
   }
 
+  expireCheckoutSession(id: string): Promise<any> {
+    return this.client.checkout.sessions.expire(id) as Promise<any>;
+  }
+
   createRefund(params: Parameters<StripeClient['refunds']['create']>[0]): Promise<any> {
     return this.client.refunds.create(params);
   }

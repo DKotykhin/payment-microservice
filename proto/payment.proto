@@ -14,7 +14,7 @@ service PaymentService {
 message CreatePaymentIntentRequest {
   string              order_id = 1;
   string              user_id  = 2;
-  int64               amount   = 3;      // in smallest currency unit (cents)
+  int32               amount   = 3;      // in smallest currency unit (cents)
   string              currency = 4;      // e.g. "usd"
   map<string, string> metadata = 5;
 }
@@ -29,7 +29,7 @@ message CreatePaymentIntentResponse {
 message CreateCheckoutSessionRequest {
   string              order_id    = 1;
   string              user_id     = 2;
-  int64               amount      = 3;
+  int32               amount      = 3;
   string              currency    = 4;
   string              success_url = 5;
   string              cancel_url  = 6;
@@ -49,15 +49,19 @@ message GetPaymentRequest {
 
 message GetPaymentsByOrderRequest {
   string order_id = 1;
+  int32  page     = 2;
+  int32  limit    = 3;
 }
 
 message GetPaymentsByUserRequest {
   string user_id = 1;
+  int32  page    = 2;
+  int32  limit   = 3;
 }
 
 message RefundPaymentRequest {
   string payment_id = 1;
-  int64  amount     = 2;
+  int32  amount     = 2;
   string reason     = 3;
 }
 
@@ -72,8 +76,8 @@ message PaymentResponse {
   string stripe_payment_intent_id   = 4;
   string stripe_checkout_session_id = 5;
   string stripe_refund_id           = 6;
-  int64  amount                     = 7;
-  int64  refunded_amount            = 8;
+  int32  amount                     = 7;
+  int32  refunded_amount            = 8;
   string currency                   = 9;
   string status                     = 10;
   string created_at                 = 11;
@@ -82,6 +86,9 @@ message PaymentResponse {
 
 message GetPaymentsResponse {
   repeated PaymentResponse payments = 1;
+  int32                    total    = 2;
+  int32                    page     = 3;
+  int32                    limit    = 4;
 }
 
 // Command to generate TypeScript code with NestJS options

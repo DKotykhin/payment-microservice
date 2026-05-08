@@ -11,6 +11,7 @@ import { PAYMENT_V1_PACKAGE_NAME } from './generated-types/payment';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: process.env.NODE_ENV === 'production' ? ['error'] : ['log', 'debug', 'warn', 'error', 'verbose'],
+    rawBody: true,
   });
 
   const logger = new Logger('Main');

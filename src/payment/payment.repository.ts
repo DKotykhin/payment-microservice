@@ -35,12 +35,12 @@ export class PaymentRepository {
     return payment;
   }
 
-  findByOrderId(orderId: string): Promise<Payment[]> {
-    return this.payments.findBy({ orderId });
+  findByOrderId(orderId: string, skip: number, take: number): Promise<[Payment[], number]> {
+    return this.payments.findAndCount({ where: { orderId }, skip, take, order: { createdAt: 'DESC' } });
   }
 
-  findByUserId(userId: string): Promise<Payment[]> {
-    return this.payments.findBy({ userId });
+  findByUserId(userId: string, skip: number, take: number): Promise<[Payment[], number]> {
+    return this.payments.findAndCount({ where: { userId }, skip, take, order: { createdAt: 'DESC' } });
   }
 
   findByPaymentIntentId(paymentIntentId: string): Promise<Payment | null> {
