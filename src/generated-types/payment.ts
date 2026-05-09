@@ -18,6 +18,8 @@ export interface CreatePaymentIntentRequest {
   /** e.g. "usd" */
   currency: string;
   metadata: { [key: string]: string };
+  /** "stripe" (default) | "paypal" */
+  paymentProvider: string;
 }
 
 export interface CreatePaymentIntentRequest_MetadataEntry {
@@ -28,7 +30,7 @@ export interface CreatePaymentIntentRequest_MetadataEntry {
 export interface CreatePaymentIntentResponse {
   paymentId: string;
   clientSecret: string;
-  stripePaymentIntentId: string;
+  providerPaymentId: string;
   status: string;
 }
 
@@ -40,6 +42,8 @@ export interface CreateCheckoutSessionRequest {
   successUrl: string;
   cancelUrl: string;
   metadata: { [key: string]: string };
+  /** "stripe" (default) | "paypal" */
+  paymentProvider: string;
 }
 
 export interface CreateCheckoutSessionRequest_MetadataEntry {
@@ -50,7 +54,7 @@ export interface CreateCheckoutSessionRequest_MetadataEntry {
 export interface CreateCheckoutSessionResponse {
   paymentId: string;
   sessionUrl: string;
-  stripeSessionId: string;
+  providerSessionId: string;
   status: string;
 }
 
@@ -84,15 +88,16 @@ export interface PaymentResponse {
   id: string;
   orderId: string;
   userId: string;
-  stripePaymentIntentId: string;
-  stripeCheckoutSessionId: string;
-  stripeRefundId: string;
+  providerPaymentId: string;
+  providerSessionId: string;
+  providerRefundId: string;
   amount: number;
   refundedAmount: number;
   currency: string;
   status: string;
   createdAt: string;
   updatedAt: string;
+  paymentProvider: string;
 }
 
 export interface GetPaymentsResponse {

@@ -12,35 +12,37 @@ service PaymentService {
 }
 
 message CreatePaymentIntentRequest {
-  string              order_id = 1;
-  string              user_id  = 2;
-  int32               amount   = 3;      // in smallest currency unit (cents)
-  string              currency = 4;      // e.g. "usd"
-  map<string, string> metadata = 5;
+  string              order_id         = 1;
+  string              user_id          = 2;
+  int32               amount           = 3;      // in smallest currency unit (cents)
+  string              currency         = 4;      // e.g. "usd"
+  map<string, string> metadata         = 5;
+  string              payment_provider = 6;      // "stripe" (default) | "paypal"
 }
 
 message CreatePaymentIntentResponse {
-  string payment_id               = 1;
-  string client_secret            = 2;
-  string stripe_payment_intent_id = 3;
-  string status                   = 4;
+  string payment_id          = 1;
+  string client_secret       = 2;
+  string provider_payment_id = 3;
+  string status              = 4;
 }
 
 message CreateCheckoutSessionRequest {
-  string              order_id    = 1;
-  string              user_id     = 2;
-  int32               amount      = 3;
-  string              currency    = 4;
-  string              success_url = 5;
-  string              cancel_url  = 6;
-  map<string, string> metadata    = 7;
+  string              order_id         = 1;
+  string              user_id          = 2;
+  int32               amount           = 3;
+  string              currency         = 4;
+  string              success_url      = 5;
+  string              cancel_url       = 6;
+  map<string, string> metadata         = 7;
+  string              payment_provider = 8;      // "stripe" (default) | "paypal"
 }
 
 message CreateCheckoutSessionResponse {
-  string payment_id        = 1;
-  string session_url       = 2;
-  string stripe_session_id = 3;
-  string status            = 4;
+  string payment_id         = 1;
+  string session_url        = 2;
+  string provider_session_id = 3;
+  string status             = 4;
 }
 
 message GetPaymentRequest {
@@ -70,18 +72,19 @@ message CancelPaymentRequest {
 }
 
 message PaymentResponse {
-  string id                         = 1;
-  string order_id                   = 2;
-  string user_id                    = 3;
-  string stripe_payment_intent_id   = 4;
-  string stripe_checkout_session_id = 5;
-  string stripe_refund_id           = 6;
-  int32  amount                     = 7;
-  int32  refunded_amount            = 8;
-  string currency                   = 9;
-  string status                     = 10;
-  string created_at                 = 11;
-  string updated_at                 = 12;
+  string id                  = 1;
+  string order_id            = 2;
+  string user_id             = 3;
+  string provider_payment_id = 4;
+  string provider_session_id = 5;
+  string provider_refund_id  = 6;
+  int32  amount              = 7;
+  int32  refunded_amount     = 8;
+  string currency            = 9;
+  string status              = 10;
+  string created_at          = 11;
+  string updated_at          = 12;
+  string payment_provider    = 13;
 }
 
 message GetPaymentsResponse {

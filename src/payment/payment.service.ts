@@ -93,7 +93,7 @@ export class PaymentService {
     return {
       paymentId: payment.id,
       clientSecret: pi.client_secret ?? '',
-      stripePaymentIntentId: pi.id,
+      providerPaymentId: pi.id,
       status: PaymentStatus.PROCESSING,
     };
   }
@@ -151,7 +151,7 @@ export class PaymentService {
     return {
       paymentId: payment.id,
       sessionUrl: session.url ?? '',
-      stripeSessionId: session.id,
+      providerSessionId: session.id,
       status: PaymentStatus.PROCESSING,
     };
   }
@@ -400,13 +400,14 @@ export class PaymentService {
       id: payment.id,
       orderId: payment.orderId,
       userId: payment.userId,
-      stripePaymentIntentId: payment.paymentIntentId ?? '',
-      stripeCheckoutSessionId: payment.checkoutSessionId ?? '',
-      stripeRefundId: payment.refundId ?? '',
+      providerPaymentId: payment.paymentIntentId ?? '',
+      providerSessionId: payment.checkoutSessionId ?? '',
+      providerRefundId: payment.refundId ?? '',
       amount: payment.amount,
       refundedAmount: payment.refundedAmount,
       currency: payment.currency,
       status: payment.paymentStatus,
+      paymentProvider: payment.paymentProvider,
       createdAt: payment.createdAt,
       updatedAt: payment.updatedAt,
     };
