@@ -314,6 +314,13 @@ export class PaymentService {
       status: PaymentStatus.PAID,
     });
     this.sendEmailNotification(payment, 'succeeded');
+    this.messageBroker.emitOrderEvent('payment.succeeded', {
+      orderId: payment.orderId,
+      paymentId: payment.id,
+      userId: payment.userId,
+      amount: payment.amount,
+      currency: payment.currency,
+    });
   }
 
   private async onPaymentIntentFailed(obj: Record<string, unknown>): Promise<void> {
@@ -324,6 +331,10 @@ export class PaymentService {
       return;
     }
 
+    const lastPaymentError = obj['last_payment_error'] as Record<string, unknown> | undefined;
+    const rawMessage = lastPaymentError?.['message'];
+    const reason = typeof rawMessage === 'string' && rawMessage ? rawMessage : undefined;
+
     await this.repo.updateStatus(payment.id, PaymentStatus.FAILED);
     await this.repo.createEvent({
       paymentId: payment.id,
@@ -331,6 +342,12 @@ export class PaymentService {
       status: PaymentStatus.FAILED,
     });
     this.sendEmailNotification(payment, 'failed');
+    this.messageBroker.emitOrderEvent('payment.failed', {
+      orderId: payment.orderId,
+      paymentId: payment.id,
+      userId: payment.userId,
+      reason,
+    });
   }
 
   private async onCheckoutSessionCompleted(obj: Record<string, unknown>): Promise<void> {
@@ -348,6 +365,13 @@ export class PaymentService {
       status: PaymentStatus.PAID,
     });
     this.sendEmailNotification(payment, 'succeeded');
+    this.messageBroker.emitOrderEvent('payment.succeeded', {
+      orderId: payment.orderId,
+      paymentId: payment.id,
+      userId: payment.userId,
+      amount: payment.amount,
+      currency: payment.currency,
+    });
   }
 
   private async onChargeRefunded(obj: Record<string, unknown>): Promise<void> {

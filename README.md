@@ -20,6 +20,7 @@ Handles payment processing for the Coffeedoor platform. Exposes a **gRPC** inter
 - **Payments:** Stripe PaymentIntents and Checkout Sessions
 - **Database:** PostgreSQL via TypeORM — `payments` and `payment_events` tables
 - **Notifications:** Payment status emails via RabbitMQ → notification microservice
+- **Saga:** Publishes `payment.succeeded` / `payment.failed` events via RabbitMQ → order microservice
 
 ### Payment flow
 
@@ -32,7 +33,16 @@ Client → API Gateway → PaymentService.createPaymentIntent (gRPC)
                               ↓
                     PaymentService.handleStripeEvent
                               ↓
-                    Update payment status + send email
+              ┌───────────────┴───────────────┐
+          succeeded                        failed
+              ↓                               ↓
+   status → PAID                    status → FAILED
+   email notification               email notification
+   emit 'payment.succeeded'         emit 'payment.failed'
+              ↓                               ↓
+   order-microservice                order-microservice
+   PENDING → CONFIRMED               PENDING → CANCELLED
+                                     stock released
 ```
 
 ### payment_events table
@@ -52,7 +62,8 @@ Records a timeline of every payment lifecycle event. Serves two purposes:
 | `HTTP_PORT` | HTTP server port for webhook endpoint (e.g. `4242`) |
 | `DATABASE_URL` | PostgreSQL connection URL |
 | `RABBITMQ_URL` | RabbitMQ connection URL |
-| `RABBITMQ_QUEUE` | Queue name for notification events |
+| `NOTIFICATION_RABBITMQ_QUEUE` | Queue name for notification events |
+| `ORDER_EVENTS_RABBITMQ_QUEUE` | Queue name for order saga events (`payment.succeeded` / `payment.failed`) |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...` or `sk_live_...`) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 
