@@ -18,9 +18,9 @@ Handles payment processing for the Coffeedoor platform. Exposes a **gRPC** inter
 - **Transport:** gRPC on `TRANSPORT_URL` (consumed by the API gateway)
 - **Webhook:** HTTP POST `/webhook/stripe` (called by Stripe)
 - **Payments:** Stripe PaymentIntents and Checkout Sessions
-- **Database:** PostgreSQL via TypeORM — `payments` and `payment_events` tables
+- **Database:** PostgreSQL via TypeORM — `payments`, `payment_events`, and `outbox_events` tables
 - **Notifications:** Payment status emails via RabbitMQ → notification microservice
-- **Saga:** Publishes `payment.succeeded` / `payment.failed` events via RabbitMQ → order microservice
+- **Saga:** Publishes `payment.succeeded` / `payment.failed` events via RabbitMQ → order microservice (guaranteed via Outbox Pattern)
 
 ### Payment flow
 
@@ -36,9 +36,13 @@ Client → API Gateway → PaymentService.createPaymentIntent (gRPC)
               ┌───────────────┴───────────────┐
           succeeded                        failed
               ↓                               ↓
-   status → PAID                    status → FAILED
+   ┌──── DB transaction ────┐     ┌──── DB transaction ────┐
+   │ status → PAID          │     │ status → FAILED        │
+   │ outbox_events INSERT   │     │ outbox_events INSERT   │
+   └────────────────────────┘     └────────────────────────┘
+              ↓                               ↓
    email notification               email notification
-   emit 'payment.succeeded'         emit 'payment.failed'
+   outbox → 'payment.succeeded'    outbox → 'payment.failed'
               ↓                               ↓
    order-microservice                order-microservice
    PENDING → CONFIRMED               PENDING → CANCELLED
@@ -50,6 +54,16 @@ Client → API Gateway → PaymentService.createPaymentIntent (gRPC)
 Records a timeline of every payment lifecycle event. Serves two purposes:
 - **Audit log** — full history of `created → processing → succeeded/failed/refunded`
 - **Deduplication** — prevents double-processing of Stripe webhook retries via `providerEventId`
+
+### Outbox Pattern (reliable saga events)
+
+`payment.succeeded` and `payment.failed` are saga-critical — losing them would leave an order stuck. To guarantee delivery, the service uses the **Transactional Outbox Pattern**:
+
+1. The payment status update and the outbox event write happen in a **single DB transaction** — they either both commit or both roll back.
+2. A **`@OnEvent('outbox.new')`** handler fires immediately after the transaction to publish pending events to RabbitMQ.
+3. A **`@Cron(EVERY_MINUTE)` sweep** picks up any events that were not published (e.g. app crashed between commit and emit).
+
+Because the same event can be delivered more than once, the order-microservice consumer must deduplicate on the event `id`.
 
 ---
 

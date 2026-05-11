@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { DataSource } from 'typeorm';
 
+import { OutboxService } from 'src/outbox/outbox.service';
 import type {
   CancelPaymentRequest,
   CreateCheckoutSessionRequest,
@@ -46,6 +49,9 @@ export class PaymentService {
     private readonly repo: PaymentRepository,
     private readonly stripeService: StripeService,
     private readonly messageBroker: MessageBrokerService,
+    private readonly outboxService: OutboxService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ── Public methods ────────────────────────────────────────────────────────
@@ -307,20 +313,28 @@ export class PaymentService {
       return;
     }
 
-    await this.repo.updateStatus(payment.id, PaymentStatus.PAID);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Payment, { id: payment.id }, { paymentStatus: PaymentStatus.PAID });
+      await this.outboxService.saveEvent(
+        'payment.succeeded',
+        {
+          orderId: payment.orderId,
+          paymentId: payment.id,
+          userId: payment.userId,
+          amount: payment.amount,
+          currency: payment.currency,
+        },
+        manager,
+      );
+    });
+
     await this.repo.createEvent({
       paymentId: payment.id,
       eventType: PaymentEventType.SUCCEEDED,
       status: PaymentStatus.PAID,
     });
     this.sendEmailNotification(payment, 'succeeded');
-    this.messageBroker.emitOrderEvent('payment.succeeded', {
-      orderId: payment.orderId,
-      paymentId: payment.id,
-      userId: payment.userId,
-      amount: payment.amount,
-      currency: payment.currency,
-    });
+    this.eventEmitter.emit('outbox.new');
   }
 
   private async onPaymentIntentFailed(obj: Record<string, unknown>): Promise<void> {
@@ -335,19 +349,22 @@ export class PaymentService {
     const rawMessage = lastPaymentError?.['message'];
     const reason = typeof rawMessage === 'string' && rawMessage ? rawMessage : undefined;
 
-    await this.repo.updateStatus(payment.id, PaymentStatus.FAILED);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Payment, { id: payment.id }, { paymentStatus: PaymentStatus.FAILED });
+      await this.outboxService.saveEvent(
+        'payment.failed',
+        { orderId: payment.orderId, paymentId: payment.id, userId: payment.userId, reason },
+        manager,
+      );
+    });
+
     await this.repo.createEvent({
       paymentId: payment.id,
       eventType: PaymentEventType.FAILED,
       status: PaymentStatus.FAILED,
     });
     this.sendEmailNotification(payment, 'failed');
-    this.messageBroker.emitOrderEvent('payment.failed', {
-      orderId: payment.orderId,
-      paymentId: payment.id,
-      userId: payment.userId,
-      reason,
-    });
+    this.eventEmitter.emit('outbox.new');
   }
 
   private async onCheckoutSessionCompleted(obj: Record<string, unknown>): Promise<void> {
@@ -358,20 +375,28 @@ export class PaymentService {
       return;
     }
 
-    await this.repo.updateStatus(payment.id, PaymentStatus.PAID);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Payment, { id: payment.id }, { paymentStatus: PaymentStatus.PAID });
+      await this.outboxService.saveEvent(
+        'payment.succeeded',
+        {
+          orderId: payment.orderId,
+          paymentId: payment.id,
+          userId: payment.userId,
+          amount: payment.amount,
+          currency: payment.currency,
+        },
+        manager,
+      );
+    });
+
     await this.repo.createEvent({
       paymentId: payment.id,
       eventType: PaymentEventType.SUCCEEDED,
       status: PaymentStatus.PAID,
     });
     this.sendEmailNotification(payment, 'succeeded');
-    this.messageBroker.emitOrderEvent('payment.succeeded', {
-      orderId: payment.orderId,
-      paymentId: payment.id,
-      userId: payment.userId,
-      amount: payment.amount,
-      currency: payment.currency,
-    });
+    this.eventEmitter.emit('outbox.new');
   }
 
   private async onChargeRefunded(obj: Record<string, unknown>): Promise<void> {
@@ -411,7 +436,7 @@ export class PaymentService {
       currency: payment.currency.toUpperCase(),
     }).format(rawAmount / 100);
 
-    this.messageBroker.emitMessage<EmailNotificationPayload>('notification.email.send', {
+    this.messageBroker.emitNotification<EmailNotificationPayload>('notification.email.send', {
       userId: payment.userId,
       subject: subjects[event],
       template: `payment-${event}`,

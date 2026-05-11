@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { validateEnv } from './utils/validators/env-validator';
 import { EnvironmentVariables } from './utils/env.dto';
@@ -9,6 +11,7 @@ import { StripeModule } from './stripe/stripe.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { MessageBrokerModule } from './message-broker/message-broker.module';
 import { HealthCheckModule } from './health-check/health-check.module';
+import { OutboxModule } from './outbox/outbox.module';
 
 @Module({
   imports: [
@@ -17,12 +20,15 @@ import { HealthCheckModule } from './health-check/health-check.module';
       envFilePath: ['.env.local'],
       validate: (config) => validateEnv(config, EnvironmentVariables),
     }),
+    EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     HealthCheckModule,
     MessageBrokerModule,
     PaymentModule,
     StripeModule,
     WebhookModule,
+    OutboxModule,
   ],
   controllers: [],
   providers: [],
