@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsString, IsUrl, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsNotEmpty, IsString, IsUrl, Max, Min } from 'class-validator';
 
 export class EnvironmentVariables {
   @IsString()
@@ -40,4 +40,20 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   readonly STRIPE_WEBHOOK_SECRET: string;
+
+  @IsString()
+  @IsNotEmpty()
+  readonly PAYPAL_CLIENT_ID: string;
+
+  @IsString()
+  @IsNotEmpty()
+  readonly PAYPAL_CLIENT_SECRET: string;
+
+  @IsString()
+  @IsEnum(['sandbox', 'live'])
+  readonly PAYPAL_MODE: string;
+
+  @IsString()
+  @IsNotEmpty()
+  readonly PAYPAL_WEBHOOK_ID: string;
 }

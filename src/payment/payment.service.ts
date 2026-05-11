@@ -18,6 +18,8 @@ import type {
 } from 'src/generated-types/payment';
 import { EmailNotificationPayload } from 'src/message-broker/email-notification.payload';
 import { MessageBrokerService } from 'src/message-broker/message-broker.service';
+import { PaypalWebhookEvent } from 'src/paypal/paypal-webhook-event.interface';
+import { PaypalService } from 'src/paypal/paypal.service';
 import { StripeWebhookEvent } from 'src/stripe/stripe-webhook-event.interface';
 import { StripeService } from 'src/stripe/stripe.service';
 import { AppError } from 'src/utils/errors/app-error';
@@ -48,6 +50,7 @@ export class PaymentService {
   constructor(
     private readonly repo: PaymentRepository,
     private readonly stripeService: StripeService,
+    private readonly paypalService: PaypalService,
     private readonly messageBroker: MessageBrokerService,
     private readonly outboxService: OutboxService,
     private readonly eventEmitter: EventEmitter2,
@@ -57,6 +60,11 @@ export class PaymentService {
   // ── Public methods ────────────────────────────────────────────────────────
 
   async createPaymentIntent(dto: CreatePaymentIntentRequest): Promise<CreatePaymentIntentResponse> {
+    const provider = (dto.paymentProvider as PaymentProvider) || PaymentProvider.STRIPE;
+    if (provider === PaymentProvider.PAYPAL) {
+      throw AppError.badRequest('Use CreateCheckoutSession for PayPal payments');
+    }
+
     const payment = await this.repo.savePayment(
       this.repo.createPayment({
         orderId: dto.orderId,
@@ -105,6 +113,8 @@ export class PaymentService {
   }
 
   async createCheckoutSession(dto: CreateCheckoutSessionRequest): Promise<CreateCheckoutSessionResponse> {
+    const provider = (dto.paymentProvider as PaymentProvider) || PaymentProvider.STRIPE;
+
     const payment = await this.repo.savePayment(
       this.repo.createPayment({
         orderId: dto.orderId,
@@ -112,7 +122,7 @@ export class PaymentService {
         amount: dto.amount,
         currency: dto.currency,
         metadata: dto.metadata,
-        paymentProvider: PaymentProvider.STRIPE,
+        paymentProvider: provider,
         paymentStatus: PaymentStatus.PENDING,
         refundedAmount: 0,
       }),
@@ -123,6 +133,36 @@ export class PaymentService {
       eventType: PaymentEventType.CREATED,
       status: PaymentStatus.PENDING,
     });
+
+    if (provider === PaymentProvider.PAYPAL) {
+      const order = await this.callPaypal(() =>
+        this.paypalService.createOrder({
+          amount: dto.amount,
+          currency: dto.currency,
+          returnUrl: dto.successUrl,
+          cancelUrl: dto.cancelUrl,
+          metadata: { paymentId: payment.id, orderId: dto.orderId, userId: dto.userId },
+        }),
+      );
+
+      await this.repo.updatePayment(payment.id, {
+        paymentIntentId: order.id,
+        paymentStatus: PaymentStatus.PROCESSING,
+      });
+
+      await this.repo.createEvent({
+        paymentId: payment.id,
+        eventType: PaymentEventType.PROCESSING,
+        status: PaymentStatus.PROCESSING,
+      });
+
+      return {
+        paymentId: payment.id,
+        sessionUrl: order.approveUrl,
+        providerSessionId: order.id,
+        status: PaymentStatus.PROCESSING,
+      };
+    }
 
     const session = await this.callStripe<StripeCheckoutSession>(() =>
       this.stripeService.createCheckoutSession({
@@ -203,19 +243,30 @@ export class PaymentService {
       throw AppError.badRequest(`Refund amount ${amount} exceeds available balance ${available}`);
     }
 
-    const refund = await this.callStripe<StripeRefund>(() =>
-      this.stripeService.createRefund({
-        payment_intent: payment.paymentIntentId ?? undefined,
-        amount,
-        reason: (reason as 'duplicate' | 'fraudulent' | 'requested_by_customer') || undefined,
-      }),
-    );
+    let refundId: string;
+    if (payment.paymentProvider === PaymentProvider.PAYPAL) {
+      if (!payment.checkoutSessionId) {
+        throw AppError.unprocessableEntity('PayPal payment has no capture ID — cannot refund');
+      }
+      refundId = await this.callPaypal(() =>
+        this.paypalService.createRefund(payment.checkoutSessionId!, amount, payment.currency),
+      );
+    } else {
+      const stripeRefund = await this.callStripe<StripeRefund>(() =>
+        this.stripeService.createRefund({
+          payment_intent: payment.paymentIntentId ?? undefined,
+          amount,
+          reason: (reason as 'duplicate' | 'fraudulent' | 'requested_by_customer') || undefined,
+        }),
+      );
+      refundId = stripeRefund.id;
+    }
 
     const newRefundedAmount = payment.refundedAmount + amount;
     const newStatus = newRefundedAmount >= payment.amount ? PaymentStatus.REFUNDED : PaymentStatus.PAID;
 
     const updated = await this.repo.updatePayment(payment.id, {
-      refundId: refund.id,
+      refundId: refundId,
       refundedAmount: newRefundedAmount,
       paymentStatus: newStatus,
     });
@@ -239,7 +290,9 @@ export class PaymentService {
       throw AppError.unprocessableEntity(`Cannot cancel payment with status "${payment.paymentStatus}"`);
     }
 
-    if (payment.paymentIntentId) {
+    if (payment.paymentProvider === PaymentProvider.PAYPAL) {
+      await this.callPaypal(() => this.paypalService.voidOrder(payment.paymentIntentId!));
+    } else if (payment.paymentIntentId) {
       await this.callStripe(() => this.stripeService.cancelPaymentIntent(payment.paymentIntentId!));
     } else if (payment.checkoutSessionId) {
       await this.callStripe(() => this.stripeService.expireCheckoutSession(payment.checkoutSessionId!));
@@ -412,7 +465,177 @@ export class PaymentService {
     });
   }
 
+  // ── PayPal webhook entry point ────────────────────────────────────────────
+
+  async handlePaypalEvent(event: PaypalWebhookEvent): Promise<void> {
+    try {
+      await this.repo.createEvent({
+        eventType: PaymentEventType.WEBHOOK_RECEIVED,
+        providerEventId: event.id,
+        data: event,
+      });
+    } catch {
+      // unique constraint violation — event already received, proceed to idempotency check
+    }
+
+    if (await this.repo.isEventProcessed(event.id)) {
+      this.logger.debug(`Skipping already-processed PayPal event: ${event.id}`);
+      return;
+    }
+
+    const resource = event.resource;
+
+    switch (event.event_type) {
+      case 'CHECKOUT.ORDER.APPROVED':
+        await this.onPaypalOrderApproved(resource);
+        break;
+      case 'PAYMENT.CAPTURE.COMPLETED':
+        await this.onPaypalCaptureCompleted(resource);
+        break;
+      case 'PAYMENT.CAPTURE.DENIED':
+        await this.onPaypalCaptureDenied(resource);
+        break;
+      case 'PAYMENT.CAPTURE.REFUNDED':
+        await this.onPaypalCaptureRefunded(resource);
+        break;
+      default:
+        this.logger.debug(`Unhandled PayPal event type: ${event.event_type}`);
+    }
+
+    try {
+      await this.repo.createEvent({
+        eventType: PaymentEventType.WEBHOOK_PROCESSED,
+        providerEventId: event.id,
+      });
+    } catch {
+      // unique constraint violation — duplicate delivery, already processed
+    }
+  }
+
+  // ── Private PayPal webhook handlers ──────────────────────────────────────
+
+  private async onPaypalOrderApproved(resource: Record<string, unknown>): Promise<void> {
+    const orderId = String(resource['id']);
+    const payment = await this.repo.findByPaymentIntentId(orderId);
+    if (!payment) {
+      this.logger.warn(`CHECKOUT.ORDER.APPROVED: no payment found for order ${orderId}`);
+      return;
+    }
+
+    if (payment.paymentStatus === PaymentStatus.CANCELLED) {
+      this.logger.warn(`CHECKOUT.ORDER.APPROVED: payment ${payment.id} is cancelled, skipping capture`);
+      return;
+    }
+
+    const captureId = await this.callPaypal(() => this.paypalService.captureOrder(orderId));
+    await this.repo.updatePayment(payment.id, { checkoutSessionId: captureId });
+    await this.repo.createEvent({
+      paymentId: payment.id,
+      eventType: PaymentEventType.PROCESSING,
+      status: PaymentStatus.PROCESSING,
+    });
+  }
+
+  private async onPaypalCaptureCompleted(resource: Record<string, unknown>): Promise<void> {
+    const paymentId = typeof resource['custom_id'] === 'string' ? resource['custom_id'] : '';
+    if (!paymentId) {
+      this.logger.warn('PAYMENT.CAPTURE.COMPLETED: missing custom_id');
+      return;
+    }
+
+    const payment = await this.repo.findById(paymentId);
+    if (!payment) {
+      this.logger.warn(`PAYMENT.CAPTURE.COMPLETED: no payment found for id ${paymentId}`);
+      return;
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Payment, { id: payment.id }, { paymentStatus: PaymentStatus.PAID });
+      await this.outboxService.saveEvent(
+        'payment.succeeded',
+        {
+          orderId: payment.orderId,
+          paymentId: payment.id,
+          userId: payment.userId,
+          amount: payment.amount,
+          currency: payment.currency,
+        },
+        manager,
+      );
+    });
+
+    await this.repo.createEvent({
+      paymentId: payment.id,
+      eventType: PaymentEventType.SUCCEEDED,
+      status: PaymentStatus.PAID,
+    });
+    this.sendEmailNotification(payment, 'succeeded');
+    this.eventEmitter.emit('outbox.new');
+  }
+
+  private async onPaypalCaptureDenied(resource: Record<string, unknown>): Promise<void> {
+    const paymentId = typeof resource['custom_id'] === 'string' ? resource['custom_id'] : '';
+    if (!paymentId) {
+      this.logger.warn('PAYMENT.CAPTURE.DENIED: missing custom_id');
+      return;
+    }
+
+    const payment = await this.repo.findById(paymentId);
+    if (!payment) {
+      this.logger.warn(`PAYMENT.CAPTURE.DENIED: no payment found for id ${paymentId}`);
+      return;
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Payment, { id: payment.id }, { paymentStatus: PaymentStatus.FAILED });
+      await this.outboxService.saveEvent(
+        'payment.failed',
+        { orderId: payment.orderId, paymentId: payment.id, userId: payment.userId, reason: 'Denied by PayPal' },
+        manager,
+      );
+    });
+
+    await this.repo.createEvent({
+      paymentId: payment.id,
+      eventType: PaymentEventType.FAILED,
+      status: PaymentStatus.FAILED,
+    });
+    this.sendEmailNotification(payment, 'failed');
+    this.eventEmitter.emit('outbox.new');
+  }
+
+  private async onPaypalCaptureRefunded(resource: Record<string, unknown>): Promise<void> {
+    const links = resource['links'] as Array<{ href: string; rel: string }> | undefined;
+    const captureHref = links?.find((l) => l.rel === 'up')?.href;
+    const captureId = captureHref?.split('/').pop();
+
+    if (!captureId) {
+      this.logger.warn('PAYMENT.CAPTURE.REFUNDED: could not extract capture ID from links');
+      return;
+    }
+
+    const payment = await this.repo.findByCheckoutSessionId(captureId);
+    if (!payment || payment.paymentStatus === PaymentStatus.REFUNDED) return;
+
+    await this.repo.updateStatus(payment.id, PaymentStatus.REFUNDED);
+    await this.repo.createEvent({
+      paymentId: payment.id,
+      eventType: PaymentEventType.REFUNDED,
+      status: PaymentStatus.REFUNDED,
+    });
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private async callPaypal<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`PayPal error: ${message}`);
+      throw AppError.internalServerError(message);
+    }
+  }
 
   private async callStripe<T>(fn: () => Promise<T>): Promise<T> {
     try {

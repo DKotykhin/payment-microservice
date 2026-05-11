@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { PaypalWebhookEvent } from 'src/paypal/paypal-webhook-event.interface';
+import { PaypalService } from 'src/paypal/paypal.service';
 import { StripeWebhookEvent } from 'src/stripe/stripe-webhook-event.interface';
 import { StripeService } from 'src/stripe/stripe.service';
 import { AppError } from 'src/utils/errors/app-error';
@@ -11,6 +13,7 @@ export class WebhookService {
 
   constructor(
     private readonly stripeService: StripeService,
+    private readonly paypalService: PaypalService,
     private readonly paymentService: PaymentService,
   ) {}
 
@@ -27,5 +30,23 @@ export class WebhookService {
 
     this.logger.log(`Received Stripe event: ${event.type} (${event.id})`);
     await this.paymentService.handleStripeEvent(event);
+  }
+
+  async handlePaypalWebhook(rawBody: Buffer, headers: Record<string, string>): Promise<void> {
+    const isValid = await this.paypalService.verifyWebhookSignature(headers, rawBody);
+    if (!isValid) {
+      this.logger.warn('PayPal webhook signature verification failed');
+      throw AppError.badRequest('Invalid webhook signature');
+    }
+
+    let event: PaypalWebhookEvent;
+    try {
+      event = JSON.parse(rawBody.toString()) as PaypalWebhookEvent;
+    } catch {
+      throw AppError.badRequest('Invalid PayPal webhook payload');
+    }
+
+    this.logger.log(`Received PayPal event: ${event.event_type} (${event.id})`);
+    await this.paymentService.handlePaypalEvent(event);
   }
 }

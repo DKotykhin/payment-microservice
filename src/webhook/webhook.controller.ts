@@ -14,4 +14,11 @@ export class WebhookController {
     this.logger.log('Received Stripe webhook');
     return this.webhookService.handleStripeWebhook(req.rawBody!, signature);
   }
+
+  @Post('paypal')
+  @HttpCode(HttpStatus.OK)
+  handlePaypalWebhook(@Headers() headers: Record<string, string>, @Req() req: { rawBody?: Buffer }): Promise<void> {
+    this.logger.log('Received PayPal webhook');
+    return this.webhookService.handlePaypalWebhook(req.rawBody!, headers);
+  }
 }

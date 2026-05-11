@@ -12,6 +12,7 @@ import { WebhookModule } from './webhook/webhook.module';
 import { MessageBrokerModule } from './message-broker/message-broker.module';
 import { HealthCheckModule } from './health-check/health-check.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { PaypalModule } from './paypal/paypal.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { OutboxModule } from './outbox/outbox.module';
     StripeModule,
     WebhookModule,
     OutboxModule,
+    PaypalModule,
   ],
   controllers: [],
   providers: [],

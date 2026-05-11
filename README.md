@@ -5,24 +5,25 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white)
 ![Stripe](https://img.shields.io/badge/Stripe-008CDD?style=flat&logo=stripe&logoColor=white)
+![PayPal](https://img.shields.io/badge/PayPal-003087?style=flat&logo=paypal&logoColor=white)
 ![Jest](https://img.shields.io/badge/Jest-C21325?style=flat&logo=jest&logoColor=white)
 ![ESLint](https://img.shields.io/badge/ESLint-4B32C3?style=flat&logo=eslint&logoColor=white)
 ![Prettier](https://img.shields.io/badge/Prettier-F7B93E?style=flat&logo=prettier&logoColor=black)
 
-Handles payment processing for the Coffeedoor platform. Exposes a **gRPC** interface for internal services and an **HTTP** endpoint for Stripe webhook delivery.
+Handles payment processing for the Coffeedoor platform. Exposes a **gRPC** interface for internal services and **HTTP** endpoints for Stripe and PayPal webhook delivery.
 
 ---
 
 ## Architecture
 
 - **Transport:** gRPC on `TRANSPORT_URL` (consumed by the API gateway)
-- **Webhook:** HTTP POST `/webhook/stripe` (called by Stripe)
-- **Payments:** Stripe PaymentIntents and Checkout Sessions
+- **Webhooks:** HTTP POST `/webhook/stripe` and `/webhook/paypal`
+- **Payments:** Stripe (PaymentIntents + Checkout Sessions) and PayPal (Checkout Sessions / Orders API)
 - **Database:** PostgreSQL via TypeORM — `payments`, `payment_events`, and `outbox_events` tables
 - **Notifications:** Payment status emails via RabbitMQ → notification microservice
 - **Saga:** Publishes `payment.succeeded` / `payment.failed` events via RabbitMQ → order microservice (guaranteed via Outbox Pattern)
 
-### Payment flow
+### Stripe payment flow
 
 ```
 Client → API Gateway → PaymentService.createPaymentIntent (gRPC)
@@ -47,6 +48,32 @@ Client → API Gateway → PaymentService.createPaymentIntent (gRPC)
    order-microservice                order-microservice
    PENDING → CONFIRMED               PENDING → CANCELLED
                                      stock released
+```
+
+### PayPal payment flow
+
+```
+Client → API Gateway → PaymentService.createCheckoutSession (gRPC, provider: "paypal")
+                              ↓
+                     PayPal Orders API (create order)
+                              ↓
+                   Returns approve URL to client
+                              ↓
+                  User redirected to PayPal to approve
+                              ↓ (async)
+                  POST /webhook/paypal  ← CHECKOUT.ORDER.APPROVED
+                              ↓
+                  PaypalService.captureOrder (capture ID stored in DB)
+                              ↓ (async)
+                  POST /webhook/paypal  ← PAYMENT.CAPTURE.COMPLETED
+                              ↓
+              ┌───────────────┴───────────────┐
+          COMPLETED                         DENIED
+              ↓                               ↓
+   ┌──── DB transaction ────┐     ┌──── DB transaction ────┐
+   │ status → PAID          │     │ status → FAILED        │
+   │ outbox_events INSERT   │     │ outbox_events INSERT   │
+   └────────────────────────┘     └────────────────────────┘
 ```
 
 ### payment_events table
@@ -80,6 +107,10 @@ Because the same event can be delivered more than once, the order-microservice c
 | `ORDER_EVENTS_RABBITMQ_QUEUE` | Queue name for order saga events (`payment.succeeded` / `payment.failed`) |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...` or `sk_live_...`) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
+| `PAYPAL_CLIENT_ID` | PayPal app client ID |
+| `PAYPAL_CLIENT_SECRET` | PayPal app client secret |
+| `PAYPAL_WEBHOOK_ID` | PayPal webhook ID (from developer dashboard) |
+| `PAYPAL_MODE` | `sandbox` (local/staging) or `live` (production) |
 
 Copy `.env.example` to `.env.local` and fill in values before running locally.
 
@@ -133,7 +164,9 @@ npm run start:prod
 
 ---
 
-## Stripe Webhook (local development)
+## Webhook local development
+
+### Stripe
 
 Stripe cannot reach `localhost` directly. Use the Stripe CLI to forward events:
 
@@ -142,7 +175,7 @@ Stripe cannot reach `localhost` directly. Use the Stripe CLI to forward events:
 stripe login
 
 # 2. Forward webhook events to the local server
-stripe listen --forward-to localhost:4242/webhook/stripe
+stripe listen --forward-to localhost:9106/webhook/stripe
 ```
 
 Copy the `whsec_...` printed by the CLI into `.env.local` as `STRIPE_WEBHOOK_SECRET`, then restart the service.
@@ -156,6 +189,37 @@ stripe trigger payment_intent.succeeded
 # Confirm a specific PaymentIntent with a test card
 stripe payment_intents confirm <pi_id> --payment-method pm_card_visa
 ```
+
+### PayPal
+
+PayPal requires a publicly reachable URL. Use [ngrok](https://ngrok.com) to expose the local server:
+
+```bash
+# Install (macOS)
+brew install ngrok/ngrok/ngrok
+
+# Authenticate once
+ngrok config add-authtoken <your-token>
+
+# Expose the local HTTP server
+ngrok http 9106
+```
+
+Register the forwarding URL in the [PayPal Developer Dashboard](https://developer.paypal.com) under **Webhooks**:
+
+```
+https://<your-ngrok-id>.ngrok-free.app/webhook/paypal
+```
+
+Subscribe to these events:
+- `CHECKOUT.ORDER.APPROVED`
+- `PAYMENT.CAPTURE.COMPLETED`
+- `PAYMENT.CAPTURE.DENIED`
+- `PAYMENT.CAPTURE.REFUNDED`
+
+Copy the **Webhook ID** shown after saving into `.env.local` as `PAYPAL_WEBHOOK_ID`.
+
+Use sandbox buyer credentials (from the PayPal Developer Dashboard → **Sandbox Accounts**) to complete test payments at `https://www.sandbox.paypal.com`. The PayPal dashboard also has a **webhook simulator** to fire individual events without completing a real payment flow.
 
 ---
 
